@@ -63,14 +63,6 @@ class HighlightSegment(BaseModel):
     explanation: str
 
 
-class FactCheckResult(BaseModel):
-    fact_checked: bool = False
-    status: str = "not_found"
-    publisher: Optional[str] = None
-    rating: Optional[str] = None
-    message: str = "No matching published fact-check was found."
-
-
 class AnalysisResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -84,7 +76,6 @@ class AnalysisResult(BaseModel):
     key_findings: List[str]
     highlights: List[HighlightSegment]
     credibility_notes: str
-    fact_check: FactCheckResult
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -99,7 +90,6 @@ class AnalysisResponse(BaseModel):
     key_findings: List[str]
     highlights: List[HighlightSegment]
     credibility_notes: str
-    fact_check: FactCheckResult
     timestamp: str
 
 
@@ -150,11 +140,7 @@ def fact_check_claim(text: str):
     api_key = os.environ.get("FACT_CHECK_API_KEY")
 
     if not api_key:
-        return {
-            "fact_checked": False,
-            "status": "not_configured",
-            "message": "Google Fact Check API is not configured.",
-        }
+        return {"fact_checked": False}
 
     url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
 
@@ -164,37 +150,25 @@ def fact_check_claim(text: str):
     }
 
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
+
+        response = requests.get(url, params=params)
         data = response.json()
 
-        claims = data.get("claims", [])
-        if claims and claims[0].get("claimReview"):
+        if "claims" in data and len(data["claims"]) > 0:
 
-            claim = claims[0]
+            claim = data["claims"][0]
             review = claim["claimReview"][0]
 
             return {
                 "fact_checked": True,
-                "status": "found",
-                "publisher": review.get("publisher", {}).get("name"),
-                "rating": review.get("textualRating"),
-                "message": "A matching published fact-check was found.",
+                "publisher": review["publisher"]["name"],
+                "rating": review["textualRating"]
             }
 
-        return {
-            "fact_checked": False,
-            "status": "not_found",
-            "message": "No matching published fact-check was found.",
-        }
+        return {"fact_checked": False}
 
-    except requests.RequestException:
-        logging.exception("Google Fact Check request failed")
-        return {
-            "fact_checked": False,
-            "status": "error",
-            "message": "The fact-check service could not be reached.",
-        }
+    except:
+        return {"fact_checked": False}
 
 
 # -------------------------
@@ -293,8 +267,8 @@ async def analyze_content(request: AnalysisRequest):
         bias_label=analysis.get("bias_label", "Unknown"),
         key_findings=analysis.get("key_findings", []),
         highlights=[HighlightSegment(**h) for h in analysis.get("highlights", [])],
-        credibility_notes=analysis.get("credibility_notes", ""),
-        fact_check=FactCheckResult(**fact_result),
+        credibility_notes=analysis.get("credibility_notes", "")
+        + f" | Fact Check: {fact_result}",
     )
 
     doc = result.model_dump()
@@ -313,7 +287,6 @@ async def analyze_content(request: AnalysisRequest):
         key_findings=result.key_findings,
         highlights=[h.model_dump() for h in result.highlights],
         credibility_notes=result.credibility_notes,
-        fact_check=result.fact_check,
         timestamp=result.timestamp.isoformat(),
     )
 
