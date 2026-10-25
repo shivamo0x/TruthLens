@@ -274,7 +274,11 @@ async def analyze_content(request: AnalysisRequest):
     doc = result.model_dump()
     doc["timestamp"] = doc["timestamp"].isoformat()
 
-    await db.analyses.insert_one(doc)
+    try:
+        await db.analyses.insert_one(doc)
+    except Exception as e:
+        logging.exception("MongoDB save failed")
+        raise HTTPException(status_code=500, detail=f"MongoDB save failed: {str(e)}")
 
     return AnalysisResponse(
         id=result.id,
